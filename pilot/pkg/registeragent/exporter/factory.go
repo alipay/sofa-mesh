@@ -19,6 +19,7 @@ import (
 	"istio.io/istio/pilot/pkg/registeragent/exporter/default"
 	"istio.io/istio/pkg/log"
 	"istio.io/istio/pilot/pkg/registeragent/exporter/dubbo"
+	sofa "istio.io/istio/pilot/pkg/registeragent/exporter/sofa"
 )
 
 func RpcInfoExporterFactory() (r RpcAcutator) {
@@ -27,6 +28,8 @@ func RpcInfoExporterFactory() (r RpcAcutator) {
 	switch rpcType {
 	case "DUBBO":
 		r = dubbo.NewRpcInfoExporter()
+	case "SOFA":
+		r = sofa.NewRpcInfoExporter()
 	default:
 		r = _default.NewRpcInfoExporter()
 	}
