@@ -68,12 +68,12 @@ func (r *SimpleRpcInfoExporter) GetRpcServiceInfo(c *gin.Context) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		log.Errf("new local rpc request failed: ", err)
-		return
+		c.JSON(http.StatusOK, gin.H{"success": false, "data": nil})
 	}
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Errf("get local rpc info failed: ", err)
-		return
+		c.JSON(http.StatusOK, gin.H{"success": false, "data": nil})
 	}
 	defer resp.Body.Close()
 	log.Infof("status: %v", string(resp.StatusCode))
@@ -84,7 +84,7 @@ func (r *SimpleRpcInfoExporter) GetRpcServiceInfo(c *gin.Context) {
 		err := json.Unmarshal(body, &info)
 		if err != nil {
 			log.Errf("Unmarshal rpc info failed: ", err)
-			return
+			c.JSON(http.StatusOK, gin.H{"success": false, "data": nil})
 		}
 		interfacesDTO := InterfacesDTO{}
 		interfacesDTO.Protocol = "BOLT"
