@@ -54,7 +54,7 @@ var _ attribute.Bag = (*FakeBag)(nil)
 func (b *FakeBag) Get(name string) (interface{}, bool) {
 	c, found := b.Attrs[name]
 	b.referencedLock.Lock()
-	b.referenced[name] = true
+	b.referenced[name] = found
 	b.referencedLock.Unlock()
 	return c, found
 }
@@ -67,18 +67,28 @@ func (b *FakeBag) Names() []string {
 // Done indicates the bag can be reclaimed.
 func (b *FakeBag) Done() {}
 
+// Contains returns true if the key is present in the bag.
+func (b *FakeBag) Contains(key string) bool {
+	_, found := b.Attrs[key]
+	return found
+}
+
 // String is needed to implement the Bag interface.
 func (b *FakeBag) String() string { return "" }
 
 // ReferencedList returns the sorted list of attributes that were referenced. Attribute references through
-// string maps are encoded as mapname[keyname].
+// string maps are encoded as mapname[keyname]. Absent values are prefixed with "-".
 func (b *FakeBag) ReferencedList() []string {
 
 	attributes := make([]string, 0, len(b.referenced))
 
 	b.referencedLock.RLock()
-	for k := range b.referenced {
-		attributes = append(attributes, k)
+	for k, found := range b.referenced {
+		attr := k
+		if !found {
+			attr = "-" + attr
+		}
+		attributes = append(attributes, attr)
 	}
 	b.referencedLock.RUnlock()
 
@@ -107,7 +117,7 @@ func (s stringMap) Get(key string) (string, bool) {
 	if s.parent != nil {
 		name := fmt.Sprintf(`%s[%s]`, s.Name, key)
 		s.parent.referencedLock.Lock()
-		s.parent.referenced[name] = true
+		s.parent.referenced[name] = found
 		s.parent.referencedLock.Unlock()
 	}
 	return str, found

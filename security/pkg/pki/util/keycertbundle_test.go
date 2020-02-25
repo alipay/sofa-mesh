@@ -292,7 +292,7 @@ func TestNewVerifiedKeyCertBundleFromFile(t *testing.T) {
 		if err != nil {
 			if len(tc.expectedErr) == 0 {
 				t.Errorf("%s: Unexpected error: %v", id, err)
-			} else if strings.Compare(err.Error(), tc.expectedErr) != 0 {
+			} else if !strings.HasPrefix(err.Error(), tc.expectedErr) {
 				t.Errorf("%s: Unexpected error: %v VS (expected) %s", id, err, tc.expectedErr)
 			}
 		} else if len(tc.expectedErr) != 0 {

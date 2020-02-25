@@ -30,13 +30,44 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	admissionregistration "k8s.io/client-go/kubernetes/typed/admissionregistration/v1beta1"
+	"k8s.io/client-go/tools/cache"
 
 	"istio.io/istio/pkg/log"
 )
 
+var scope = log.RegisterScope("validation", "CRD validation debugging", 0)
+
+// Run an informer that watches the current webhook configuration
+// for changes.
+func (wh *Webhook) monitorWebhookChanges(stopC <-chan struct{}) chan struct{} {
+	webhookChangedCh := make(chan struct{}, 1000)
+	_, controller := cache.NewInformer(
+		wh.createInformerWebhookSource(wh.clientset, wh.webhookName),
+		&v1beta1.ValidatingWebhookConfiguration{},
+		0,
+		cache.ResourceEventHandlerFuncs{
+			AddFunc: func(_ interface{}) {
+				webhookChangedCh <- struct{}{}
+			},
+			UpdateFunc: func(prev, curr interface{}) {
+				prevObj := prev.(*v1beta1.ValidatingWebhookConfiguration)
+				currObj := curr.(*v1beta1.ValidatingWebhookConfiguration)
+				if prevObj.ResourceVersion != currObj.ResourceVersion {
+					webhookChangedCh <- struct{}{}
+				}
+			},
+			DeleteFunc: func(_ interface{}) {
+				webhookChangedCh <- struct{}{}
+			},
+		},
+	)
+	go controller.Run(stopC)
+	return webhookChangedCh
+}
+
 func (wh *Webhook) createOrUpdateWebhookConfig() {
 	if wh.webhookConfiguration == nil {
-		log.Error("validatingwebhookconfiguration update failed: no configuration loaded")
+		scope.Error("validatingwebhookconfiguration update failed: no configuration loaded")
 		reportValidationConfigUpdateError(errors.New("no configuration loaded"))
 		return
 	}
@@ -44,10 +75,10 @@ func (wh *Webhook) createOrUpdateWebhookConfig() {
 	client := wh.clientset.AdmissionregistrationV1beta1().ValidatingWebhookConfigurations()
 	updated, err := createOrUpdateWebhookConfigHelper(client, wh.webhookConfiguration)
 	if err != nil {
-		log.Errorf("%v validatingwebhookconfiguration update failed: %v", wh.webhookConfiguration.Name, err)
+		scope.Errorf("%v validatingwebhookconfiguration update failed: %v", wh.webhookConfiguration.Name, err)
 		reportValidationConfigUpdateError(err)
 	} else if updated {
-		log.Infof("%v validatingwebhookconfiguration updated", wh.webhookConfiguration.Name)
+		scope.Infof("%v validatingwebhookconfiguration updated", wh.webhookConfiguration.Name)
 		reportValidationConfigUpdate()
 	}
 }
@@ -87,10 +118,11 @@ func (wh *Webhook) rebuildWebhookConfig() error {
 	webhookConfig, err := rebuildWebhookConfigHelper(
 		wh.caFile,
 		wh.webhookConfigFile,
+		wh.webhookName,
 		wh.ownerRefs)
 	if err != nil {
 		reportValidationConfigLoadError(err)
-		log.Errorf("validatingwebhookconfiguration (re)load failed: %v", err)
+		scope.Errorf("validatingwebhookconfiguration (re)load failed: %v", err)
 		return err
 	}
 	wh.webhookConfiguration = webhookConfig
@@ -100,7 +132,7 @@ func (wh *Webhook) rebuildWebhookConfig() error {
 	if b, err := yaml.Marshal(wh.webhookConfiguration); err == nil {
 		webhookYAML = string(b)
 	}
-	log.Infof("%v validatingwebhookconfiguration (re)loaded: \n%v",
+	scope.Infof("%v validatingwebhookconfiguration (re)loaded: \n%v",
 		wh.webhookConfiguration.Name, webhookYAML)
 
 	reportValidationConfigLoad()
@@ -108,7 +140,7 @@ func (wh *Webhook) rebuildWebhookConfig() error {
 	return nil
 }
 
-// Load the CA Cert PEM from the input reader. This also verifies that the certiticate is a validate x509 cert.
+// Load the CA Cert PEM from the input reader. This also verifies that the certificate is a validate x509 cert.
 func loadCaCertPem(in io.Reader) ([]byte, error) {
 	caCertPemBytes, err := ioutil.ReadAll(in)
 	if err != nil {
@@ -122,7 +154,7 @@ func loadCaCertPem(in io.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("ca bundle contains wrong pem type: %q", block.Type)
 	}
 	if _, err := x509.ParseCertificate(block.Bytes); err != nil {
-		return nil, fmt.Errorf("ca bundle contains invalid x509 certiticate: %v", err)
+		return nil, fmt.Errorf("ca bundle contains invalid x509 certificate: %v", err)
 	}
 	return caCertPemBytes, nil
 }
@@ -132,7 +164,7 @@ func loadCaCertPem(in io.Reader) ([]byte, error) {
 // so that the cluster-scoped validatingwebhookconfiguration is properly
 // cleaned up when istio-galley is deleted.
 func rebuildWebhookConfigHelper(
-	caFile, webhookConfigFile string,
+	caFile, webhookConfigFile, webhookName string,
 	ownerRefs []metav1.OwnerReference,
 ) (*v1beta1.ValidatingWebhookConfiguration, error) {
 	// load and validate configuration
@@ -156,6 +188,9 @@ func rebuildWebhookConfigHelper(
 			webhookConfig.Webhooks[i].NamespaceSelector = &metav1.LabelSelector{}
 		}
 	}
+
+	// the webhook name is fixed at startup time
+	webhookConfig.Name = webhookName
 
 	// update ownerRefs so configuration is cleaned up when the validation deployment is deleted.
 	webhookConfig.OwnerReferences = ownerRefs
@@ -184,7 +219,7 @@ func (wh *Webhook) reloadKeyCert() {
 	pair, err := tls.LoadX509KeyPair(wh.certFile, wh.keyFile)
 	if err != nil {
 		reportValidationCertKeyUpdateError(err)
-		log.Errorf("Cert/Key reload error: %v", err)
+		scope.Errorf("Cert/Key reload error: %v", err)
 		return
 	}
 	wh.mu.Lock()
@@ -192,5 +227,5 @@ func (wh *Webhook) reloadKeyCert() {
 	wh.mu.Unlock()
 
 	reportValidationCertKeyUpdate()
-	log.Info("Cert and Key reloaded")
+	scope.Info("Cert and Key reloaded")
 }

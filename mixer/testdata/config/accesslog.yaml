@@ -1,10 +1,12 @@
 apiVersion: "config.istio.io/v1alpha2"
-kind: stdio
+kind: handler
 metadata:
-  name: handler
+  name: stdio
   namespace: istio-system
 spec:
-  outputAsJson: true
+  compiledAdapter: stdio
+  params:
+    outputAsJson: true
 ---
 apiVersion: "config.istio.io/v1alpha2"
 kind: logentry
@@ -45,6 +47,7 @@ spec:
     clientTraceId: request.headers["x-client-trace-id"] | ""
     latency: response.duration | "0ms"
     connectionMtls: connection.mtls | false
+    requestedServerName: connection.requested_server_name | ""
     userAgent: request.useragent | ""
     responseTimestamp: response.time | timestamp("2017-01-01T00:00:00Z")
     receivedBytes: request.total_size | 0
@@ -61,6 +64,6 @@ metadata:
 spec:
   match: context.protocol == "http" || context.protocol == "grpc"
   actions:
-  - handler: handler.stdio
+  - handler: stdio
     instances:
     - accesslog.logentry

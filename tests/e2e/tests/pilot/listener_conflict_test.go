@@ -25,7 +25,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/hashicorp/go-multierror"
+	multierror "github.com/hashicorp/go-multierror"
 
 	"istio.io/istio/pilot/pkg/model"
 	"istio.io/istio/tests/util"
@@ -122,9 +122,9 @@ func TestListenerConflicts(t *testing.T) {
 	newService.start()
 	defer newService.stop()
 
-	for cluster := range tc.Kube.Clusters {
+	for range tc.Kube.Clusters {
 		testName := oldService.ServiceName
-		runRetriableTest(t, cluster, testName, 10, func() error {
+		runRetriableTest(t, testName, 10, func() error {
 			infos, err := getPilotInfos()
 			if err != nil {
 				return err
@@ -178,7 +178,7 @@ func TestListenerConflicts(t *testing.T) {
 			}
 
 			if err != nil {
-				return multierror.Prefix(err, fmt.Sprintf("pilot PushStatus failed. Result=%s", infos.String()))
+				return multierror.Prefix(err, fmt.Sprintf("pilot PushContext failed. Result=%s", infos.String()))
 			}
 			return nil
 		})
@@ -211,7 +211,7 @@ func (i pilotInfos) String() string {
 type pilotInfo struct {
 	pod            string
 	pushStatusJSON string
-	pushStatus     *model.PushStatus
+	pushStatus     *model.PushContext
 }
 
 func (i *pilotInfo) String() string {
@@ -244,16 +244,16 @@ func getPilotInfo(pod string) (*pilotInfo, error) {
 
 	pushStatusStartIndex := strings.Index(result, "{")
 	if pushStatusStartIndex < 0 {
-		return nil, fmt.Errorf("unable to locate PushStatus. Exec result: %s", result)
+		return nil, fmt.Errorf("unable to locate PushContext. Exec result: %s", result)
 	}
 	pushStatusEndIndex := strings.LastIndex(result, "}")
 	if pushStatusEndIndex < 0 {
-		return nil, fmt.Errorf("unable to locate PushStatus. Exec result: %s", result)
+		return nil, fmt.Errorf("unable to locate PushContext. Exec result: %s", result)
 	}
 	pushStatusJSON := result[pushStatusStartIndex : pushStatusEndIndex+1]
 
 	// Parse the push status.
-	pushStatus := &model.PushStatus{}
+	pushStatus := &model.PushContext{}
 	if err := json.Unmarshal([]byte(pushStatusJSON), pushStatus); err != nil {
 		return nil, err
 	}

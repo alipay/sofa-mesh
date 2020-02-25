@@ -81,13 +81,15 @@ func (c *Client) Instances(hostname string) []*Instance {
 }
 
 // Instances query service instances with labels
-func (c *Client) InstancesByHost(host string) []*Instance {
+func (c *Client) InstancesByHost(hosts []string) []*Instance {
 	instances := make([]*Instance, 0)
 
 	for _, service := range c.services {
 		for _, instance := range service.instances {
-			if instance.Host == host {
-				instances = append(instances, instance)
+			for _, host := range hosts {
+				if instance.Host == host {
+					instances = append(instances, instance)
+				}
 			}
 		}
 	}

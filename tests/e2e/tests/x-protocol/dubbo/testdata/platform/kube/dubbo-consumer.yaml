@@ -1,0 +1,59 @@
+
+### dubbo consumer service ###
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    servicetype: dubbo
+  name: dubbo-consumer
+  labels:
+    app: dubbo-consumer
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http-client
+    protocol: TCP
+  selector:
+    app: dubbo-consumer
+---
+### dubbo consumer deployment ###
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: dubbo-consumer
+  name: dubbo-consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dubbo-consumer
+  template:
+    metadata:
+      annotations:
+        traffic.sidecar.istio.io/includeInboundPorts: ''
+      labels:
+        app: dubbo-consumer
+      name: dubbo-consumer
+    spec:
+      containers:
+      - command:
+        - bash
+        - -c
+        - |
+          java \
+            -Ddubbo.reference.com.alibaba.boot.dubbo.demo.consumer.DemoService.url=dubbo://dubbo-provider:12345 \
+            -Dserver.port=8080 \
+            -Dlogging.level.org.springframework.web=DEBUG \
+            -Dserver.tomcat.accesslog.enabled=true \
+            -Dserver.tomcat.accesslog.directory=/home/admin/app/logs \
+            -Ddubbo.consumer.check=false \
+            -jar dubbo-consumer.jar
+        image: docker.io/sofastack/e2e-dubbo-consumer:0.2.1
+        imagePullPolicy: IfNotPresent
+        name: app
+        ports:
+        - containerPort: 8080
+          protocol: TCP

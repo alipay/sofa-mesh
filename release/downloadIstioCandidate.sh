@@ -23,7 +23,12 @@ fi
 
 if [ "x${ISTIO_VERSION}" = "x" ] ; then
   ISTIO_VERSION=$(curl -L -s https://api.github.com/repos/istio/istio/releases/latest | \
-                  grep tag_name | sed "s/ *\"tag_name\": *\"\(.*\)\",*/\1/")
+                  grep tag_name | sed "s/ *\"tag_name\": *\"\\(.*\\)\",*/\\1/")
+fi
+
+if [ "x${ISTIO_VERSION}" = "x" ] ; then
+  echo "Unable to get latest Istio version. Set ISTIO_VERSION env var and re-run. For example: export ISTIO_VERSION=1.0.4"
+  exit;
 fi
 
 NAME="istio-$ISTIO_VERSION"
@@ -32,7 +37,7 @@ echo "Downloading $NAME from $URL ..."
 curl -L "$URL" | tar xz
 # TODO: change this so the version is in the tgz/directory name (users trying multiple versions)
 echo "Downloaded into $NAME:"
-ls $NAME
-BINDIR="$(cd $NAME/bin; pwd)"
+ls "$NAME"
+BINDIR="$(cd "$NAME/bin" && pwd)"
 echo "Add $BINDIR to your path; e.g copy paste in your shell and/or ~/.profile:"
 echo "export PATH=\"\$PATH:$BINDIR\""

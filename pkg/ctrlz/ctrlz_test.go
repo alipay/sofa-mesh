@@ -14,10 +14,36 @@
 
 package ctrlz
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
-func TestStartStop(t *testing.T) {
+func TestStartStopEnabled(t *testing.T) {
+	done := make(chan struct{})
+	listeningTestProbe = func() { close(done) }
+	defer func() { listeningTestProbe = nil }()
 	o := DefaultOptions()
-	go Run(o, nil)
-	Stop()
+	// TODO: Pick an unused port in o.Port.
+	s, err := Run(o, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	defer s.Close()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Timed out waiting for listeningTestProbe to be called")
+	}
+}
+
+func TestStartStopDisabled(t *testing.T) {
+	listeningTestProbe = nil
+	o := DefaultOptions()
+	o.Port = 0
+	s, err := Run(o, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	s.Close()
 }

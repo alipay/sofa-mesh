@@ -27,7 +27,7 @@ $(foreach DEP,$(ISTIO_DEB_DEPS),\
         $(eval ${ISTIO_OUT}/istio.deb: $(ISTIO_OUT)/$(DEP)) \
         $(eval ISTIO_FILES+=$(subst $(GO_TOP)/,,$(ISTIO_OUT))/$(DEP)=$(ISTIO_DEB_BIN)/$(DEP)) )
 
-SIDECAR_DEB_DEPS:=envoy pilot-agent node_agent
+SIDECAR_DEB_DEPS:=mosn pilot-agent node_agent
 SIDECAR_FILES:=
 # subst is used to turn an absolute path into the relative path that fpm seems to expect
 $(foreach DEP,$(SIDECAR_DEB_DEPS),\
@@ -35,6 +35,7 @@ $(foreach DEP,$(SIDECAR_DEB_DEPS),\
         $(eval SIDECAR_FILES+=$(subst $(GO_TOP)/,,$(ISTIO_OUT))/$(DEP)=$(ISTIO_DEB_BIN)/$(DEP)) )
 
 ISTIO_DEB_DEST:=${ISTIO_DEB_BIN}/istio-start.sh \
+		${ISTIO_DEB_BIN}/istio-node-agent-start.sh \
 		${ISTIO_DEB_BIN}/istio-iptables.sh \
 		/lib/systemd/system/istio.service \
 		/lib/systemd/system/istio-auth-node-agent.service \
@@ -45,6 +46,7 @@ $(foreach DEST,$(ISTIO_DEB_DEST),\
         $(eval SIDECAR_FILES+=src/istio.io/istio/tools/deb/$(notdir $(DEST))=$(DEST)))
 
 SIDECAR_FILES+=src/istio.io/istio/tools/deb/envoy_bootstrap_v2.json=/var/lib/istio/envoy/envoy_bootstrap_tmpl.json
+SIDECAR_FILES+=src/istio.io/istio/tools/deb/envoy_bootstrap_drain.json=/var/lib/istio/envoy/envoy_bootstrap_drain.json
 
 # original name used in 0.2 - will be updated to 'istio.deb' since it now includes all istio binaries.
 ISTIO_DEB_NAME ?= istio-sidecar
@@ -58,7 +60,7 @@ ISTIO_DEB_NAME ?= istio-sidecar
 ${ISTIO_OUT}/istio-sidecar.deb: | ${ISTIO_OUT}
 	$(MAKE) deb/fpm
 
-#remove leading charecters since debian version expects to start with digit
+#remove leading characters since debian version expects to start with digit
 DEB_VERSION := $(shell echo $(VERSION) | sed 's/^[a-z]*-//')
 
 # Package the sidecar deb file.

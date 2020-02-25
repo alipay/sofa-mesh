@@ -4,10 +4,10 @@ metadata:
   name: kiali
   namespace: {{ .Release.Namespace }}
   labels:
-    app: kiali
-    chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
-    release: {{ .Release.Name }}
+    app: {{ template "kiali.name" . }}
+    chart: {{ template "kiali.chart" . }}
     heritage: {{ .Release.Service }}
+    release: {{ .Release.Name }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
@@ -18,9 +18,14 @@ spec:
       name: kiali
       labels:
         app: kiali
+        chart: {{ template "kiali.chart" . }}
+        heritage: {{ .Release.Service }}
+        release: {{ .Release.Name }}
       annotations:
         sidecar.istio.io/inject: "false"
         scheduler.alpha.kubernetes.io/critical-pod: ""
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
     spec:
       serviceAccountName: kiali-service-account
 {{- if .Values.global.priorityClassName }}
@@ -40,35 +45,17 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        - name: SERVER_CREDENTIALS_USERNAME
-          valueFrom:
-            secretKeyRef:
-              name: kiali
-              key: username
-        - name: SERVER_CREDENTIALS_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: kiali
-              key: passphrase
         - name: PROMETHEUS_SERVICE_URL
-          value: http://prometheus:9090
-{{- if .Values.dashboard.grafanaURL }}
-        - name: GRAFANA_URL
-          value: {{ .Values.dashboard.grafanaURL }}
-{{- end }}
-        - name: GRAFANA_DASHBOARD
-          value: istio-service-dashboard
-        - name: GRAFANA_VAR_SERVICE_SOURCE
-          value: var-service
-        - name: GRAFANA_VAR_SERVICE_DEST
-          value: var-service
-{{- if .Values.dashboard.jaegerURL }}
-        - name: JAEGER_URL
-          value: {{ .Values.dashboard.jaegerURL }}
+          value: {{ .Values.prometheusAddr }}
+{{- if .Values.contextPath }}
+        - name: SERVER_WEB_ROOT
+          value: {{ .Values.contextPath }}
 {{- end }}
         volumeMounts:
         - name: kiali-configuration
           mountPath: "/kiali-configuration"
+        - name: kiali-secret
+          mountPath: "/kiali-secret"
         resources:
 {{- if .Values.resources }}
 {{ toYaml .Values.resources | indent 10 }}
@@ -79,3 +66,10 @@ spec:
       - name: kiali-configuration
         configMap:
           name: kiali
+      - name: kiali-secret
+        secret:
+          secretName: {{ .Values.dashboard.secretName }}
+          optional: true
+      affinity:
+      {{- include "nodeaffinity" . | indent 6 }}
+      {{- include "podAntiAffinity" . | indent 6 }}

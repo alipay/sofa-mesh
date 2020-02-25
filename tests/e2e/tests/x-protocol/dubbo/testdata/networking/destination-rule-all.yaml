@@ -1,0 +1,13 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: dubbo-provider
+spec:
+  host: dubbo-provider
+  subsets:
+  - name: v1
+    labels:
+      ver: v1
+  - name: v2
+    labels:
+      ver: v2

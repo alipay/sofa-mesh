@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
@@ -117,6 +117,17 @@ func CopyPodFiles(container, pod, ns, source, dest string) {
 	}
 	output, _ := Shell(cmd)
 	log.Errorf("%s\n%s", cmd, output)
+}
+
+// CopyFilesToPod copies files from a machine to a pod.
+func CopyFilesToPod(container, pod, ns, source, dest string) error {
+	// kubectl cp /tmp/bar  <some-namespace>/<some-pod>:/tmp/foo -c container
+	cmd := fmt.Sprintf("kubectl cp %s %s/%s:%s", source, ns, pod, dest)
+	if container != "" {
+		cmd += " -c " + container
+	}
+	_, err := Shell(cmd)
+	return err
 }
 
 // GetAppPods awaits till all pods are running in a namespace, and returns a map

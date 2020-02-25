@@ -17,12 +17,12 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"regexp"
 	"strings"
 	"testing"
 
 	"istio.io/istio/istioctl/pkg/kubernetes"
 	"istio.io/istio/pilot/test/util"
+	"istio.io/istio/pkg/version"
 )
 
 type execTestCase struct {
@@ -30,9 +30,9 @@ type execTestCase struct {
 	args             []string
 
 	// Typically use one of the three
-	expectedOutput string         // Expected constant output
-	expectedRegexp *regexp.Regexp // Expected regexp output
-	goldenFilename string         // Expected output stored in golden file
+	expectedOutput string // Expected constant output
+	expectedString string // String output is expected to contain
+	goldenFilename string // Expected output stored in golden file
 
 	wantException bool
 }
@@ -47,34 +47,37 @@ func TestProxyConfig(t *testing.T) {
 	cannedConfig := map[string][]byte{
 		"details-v1-5b7f94f9bc-wp5tb": util.ReadFile("../../pkg/writer/compare/testdata/envoyconfigdump.json", t),
 	}
+	endpointConfig := map[string][]byte{
+		"details-v1-5b7f94f9bc-wp5tb": util.ReadFile("../../pkg/writer/envoy/clusters/testdata/clusters.json", t),
+	}
 	cases := []execTestCase{
 		{ // case 0
 			args:           strings.Split("proxy-config", " "),
-			expectedRegexp: regexp.MustCompile("^A group of commands used to retrieve information about.*"),
+			expectedString: "A group of commands used to retrieve information about",
 		},
 		{ // case 1 short name 'pc'
 			args:           strings.Split("pc", " "),
-			expectedRegexp: regexp.MustCompile("^A group of commands used to retrieve information about.*"),
+			expectedString: "A group of commands used to retrieve information about",
 		},
 		{ // case 2 clusters invalid
 			args:           strings.Split("proxy-config clusters invalid", " "),
-			expectedRegexp: regexp.MustCompile("^Error: unable to retrieve Pod: pods \"invalid\" not found.*"),
-			wantException:  true, // "istioctl get invalid" should fail
+			expectedString: "unable to retrieve Pod: pods \"invalid\" not found",
+			wantException:  true, // "istioctl proxy-config clusters invalid" should fail
 		},
 		{ // case 3 listeners invalid
 			args:           strings.Split("proxy-config listeners invalid", " "),
-			expectedRegexp: regexp.MustCompile("^Error: unable to retrieve Pod: pods \"invalid\" not found.*"),
-			wantException:  true, // "istioctl get invalid" should fail
+			expectedString: "unable to retrieve Pod: pods \"invalid\" not found",
+			wantException:  true, // "istioctl proxy-config listeners invalid" should fail
 		},
 		{ // case 4 routes invalid
 			args:           strings.Split("proxy-config routes invalid", " "),
-			expectedRegexp: regexp.MustCompile("^Error: unable to retrieve Pod: pods \"invalid\" not found.*"),
-			wantException:  true, // "istioctl get invalid" should fail
+			expectedString: "unable to retrieve Pod: pods \"invalid\" not found",
+			wantException:  true, // "istioctl proxy-config routes invalid" should fail
 		},
 		{ // case 5 bootstrap invalid
 			args:           strings.Split("proxy-config bootstrap invalid", " "),
-			expectedRegexp: regexp.MustCompile("^Error: unable to retrieve Pod: pods \"invalid\" not found.*"),
-			wantException:  true, // "istioctl get invalid" should fail
+			expectedString: "unable to retrieve Pod: pods \"invalid\" not found",
+			wantException:  true, // "istioctl proxy-config bootstrap invalid" should fail
 		},
 		{ // case 6 clusters valid
 			execClientConfig: cannedConfig,
@@ -99,6 +102,25 @@ xds-grpc                                        -         -          -          
 NAME                                                    VIRTUAL HOSTS
 15004                                                   2
 inbound|9080||productpage.default.svc.cluster.local     1
+`,
+		},
+		{ // case 9 endpoint invalid
+			args:           strings.Split("proxy-config endpoint invalid", " "),
+			expectedString: "unable to retrieve Pod: pods \"invalid\" not found",
+			wantException:  true, // "istioctl proxy-config endpoint invalid" should fail
+		},
+		{ // case 10 endpoint valid
+			execClientConfig: endpointConfig,
+			args:             strings.Split("proxy-config endpoint details-v1-5b7f94f9bc-wp5tb --port=15014", " "),
+			expectedOutput: `ENDPOINT              STATUS        CLUSTER
+172.17.0.14:15014     UNHEALTHY     outbound|15014||istio-policy.istio-system.svc.cluster.local
+`,
+		},
+		{ // case 11 endpoint status filter
+			execClientConfig: endpointConfig,
+			args:             strings.Split("proxy-config endpoint details-v1-5b7f94f9bc-wp5tb --status=unhealthy", " "),
+			expectedOutput: `ENDPOINT              STATUS        CLUSTER
+172.17.0.14:15014     UNHEALTHY     outbound|15014||istio-policy.istio-system.svc.cluster.local
 `,
 		},
 	}
@@ -126,13 +148,11 @@ func verifyExecTestOutput(t *testing.T, c execTestCase) {
 	output := out.String()
 
 	if c.expectedOutput != "" && c.expectedOutput != output {
-		t.Fatalf("Unexpected output for 'istioctl %s'\n got: %q\nwant: %q",
-			strings.Join(c.args, " "), output, c.expectedOutput)
+		t.Fatalf("Unexpected output for 'istioctl %s'\n got: %q\nwant: %q", strings.Join(c.args, " "), output, c.expectedOutput)
 	}
 
-	if c.expectedRegexp != nil && !c.expectedRegexp.MatchString(output) {
-		t.Fatalf("Output didn't match for 'istioctl %s'\n got %v\nwant: %v",
-			strings.Join(c.args, " "), output, c.expectedRegexp)
+	if c.expectedString != "" && !strings.Contains(output, c.expectedString) {
+		t.Fatalf("Output didn't match for 'istioctl %s'\n got %v\nwant: %v", strings.Join(c.args, " "), output, c.expectedString)
 	}
 
 	if c.goldenFilename != "" {
@@ -163,10 +183,12 @@ func mockClientExecFactoryGenerator(testResults map[string][]byte) func(kubeconf
 	return outFactory
 }
 
+// nolint: unparam
 func (client mockExecConfig) AllPilotsDiscoveryDo(pilotNamespace, method, path string, body []byte) (map[string][]byte, error) {
 	return client.results, nil
 }
 
+// nolint: unparam
 func (client mockExecConfig) EnvoyDo(podName, podNamespace, method, path string, body []byte) ([]byte, error) {
 	results, ok := client.results[podName]
 	if !ok {
@@ -175,9 +197,14 @@ func (client mockExecConfig) EnvoyDo(podName, podNamespace, method, path string,
 	return results, nil
 }
 
+// nolint: unparam
 func (client mockExecConfig) PilotDiscoveryDo(pilotNamespace, method, path string, body []byte) ([]byte, error) {
 	for _, results := range client.results {
 		return results, nil
 	}
 	return nil, fmt.Errorf("unable to find any Pilot instances")
+}
+
+func (client mockExecConfig) GetIstioVersions(namespace string) (*version.MeshInfo, error) {
+	return nil, nil
 }

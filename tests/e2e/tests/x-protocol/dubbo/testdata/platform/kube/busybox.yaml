@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: busybox
+  name: busybox
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: busybox
+  template:
+    metadata:
+      labels:
+        app: busybox
+      name: busybox
+    spec:
+      restartPolicy: Always
+      containers:
+      - image: yauritux/busybox-curl
+        imagePullPolicy: IfNotPresent
+        name: app
+        command:
+        - sleep
+        - "3600"

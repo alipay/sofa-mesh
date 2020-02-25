@@ -25,3 +25,4 @@ SOFAMesh 是基于 [Istio](https://istio.io) 改进和扩展而来的 Service Me
 - 增加对 [SOFA RPC](https://github.com/sofastack/sofa-rpc)、Dubbo 的支持
 
 初始版本由蚂蚁金服和阿里大文娱UC事业部携手贡献。
+

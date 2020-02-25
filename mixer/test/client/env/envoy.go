@@ -1,4 +1,4 @@
-// Copyright 2017 Istio Authors. All Rights Reserved.
+// Copyright 2017 Istio Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,27 +16,28 @@ package env
 
 import (
 	"fmt"
+	"istio.io/istio/pilot/pkg/proxy/envoy"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"time"
 
-	"istio.io/istio/tests/util"
+	"istio.io/istio/pkg/test/env"
 )
 
 // Envoy stores data for Envoy process
 type Envoy struct {
-	cmd   *exec.Cmd
-	ports *Ports
+	cmd    *exec.Cmd
+	ports  *Ports
+	baseID string
 }
 
-// NewEnvoy creates a new Envoy struct and starts envoy.
-func (s *TestSetup) NewEnvoy() (*Envoy, error) {
-	confPath := filepath.Join(util.IstioOut, fmt.Sprintf("config.conf.%v.yaml", s.ports.AdminPort))
+// NewMosn creates a new Envoy struct and starts mson.
+func (s *TestSetup) NewMosn() (*Envoy, error) {
+	confPath := filepath.Join(env.IstioOut, fmt.Sprintf("config.conf.%v.yaml", s.ports.AdminPort))
 	log.Printf("Envoy config: in %v\n", confPath)
-	if err := s.CreateEnvoyConf(confPath); err != nil {
+	if err := s.CreateEnvoyConf(confPath, jsonFormat); err != nil {
 		return nil, err
 	}
 
@@ -45,39 +46,29 @@ func (s *TestSetup) NewEnvoy() (*Envoy, error) {
 		debugLevel = "info"
 	}
 
-	// Don't use hot-start, each Envoy re-start use different base-id
-	args := []string{"-c", confPath,
-		"--v2-config-only",
-		"--drain-time-s", "1",
-		// base id is shared between restarted envoys
-		"--base-id", strconv.Itoa(int(s.testName))}
-	if s.stress {
-		args = append(args, "--concurrency", "10")
-	} else {
-		// debug is far too verbose.
-		args = append(args, "-l", debugLevel, "--concurrency", "1")
-	}
-	if s.disableHotRestart {
-		args = append(args, "--disable-hot-restart")
-	} else {
-		args = append(args,
-			"--parent-shutdown-time-s", "1",
-			"--restart-epoch", strconv.Itoa(s.epoch))
-	}
+	baseID := ""
+	// use the mosn's args
+	args := []string{ envoy.CmdStart,
+		envoy.ArgConfig, confPath}
+
 	if s.EnvoyParams != nil {
 		args = append(args, s.EnvoyParams...)
 	}
 	/* #nosec */
-	envoyPath := filepath.Join(util.IstioBin, "envoy")
+	envoyPath := filepath.Join(env.IstioBin, "mosn")
 	if path, exists := os.LookupEnv("ENVOY_PATH"); exists {
 		envoyPath = path
 	}
 	cmd := exec.Command(envoyPath, args...)
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
+	if s.Dir != "" {
+		cmd.Dir = s.Dir
+	}
 	return &Envoy{
-		cmd:   cmd,
-		ports: s.ports,
+		cmd:    cmd,
+		ports:  s.ports,
+		baseID: baseID,
 	}, nil
 }
 
@@ -87,11 +78,9 @@ func (s *Envoy) Start() error {
 	if err != nil {
 		return err
 	}
-
-	url := fmt.Sprintf("http://localhost:%v/server_info", s.ports.AdminPort)
-	WaitForHTTPServer(url)
-
-	return nil
+	// use mosn xxx/listeners to check process
+	url := fmt.Sprintf("http://localhost:%v/listeners", s.ports.AdminPort)
+	return WaitForHTTPServer(url)
 }
 
 // Stop stops the envoy process
@@ -115,4 +104,16 @@ func (s *Envoy) Stop() error {
 	}
 
 	return nil
+}
+
+// TearDown removes shared memory left by Envoy
+func (s *Envoy) TearDown() {
+	if s.baseID != "" {
+		path := "/dev/shm/envoy_shared_memory_" + s.baseID + "0"
+		if err := os.Remove(path); err != nil {
+			log.Printf("failed to %s\n", err)
+		} else {
+			log.Printf("removed Envoy's shared memory\n")
+		}
+	}
 }

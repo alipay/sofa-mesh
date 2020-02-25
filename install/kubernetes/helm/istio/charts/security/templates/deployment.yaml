@@ -6,19 +6,26 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     app: {{ template "security.name" . }}
-    chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
-    release: {{ .Release.Name }}
+    chart: {{ template "security.chart" . }}
     heritage: {{ .Release.Service }}
+    release: {{ .Release.Name }}
     istio: citadel
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: 1
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   template:
     metadata:
       labels:
+        app: {{ template "security.name" . }}
+        chart: {{ template "security.chart" . }}
+        heritage: {{ .Release.Service }}
+        release: {{ .Release.Name }}
         istio: citadel
       annotations:
         sidecar.istio.io/inject: "false"
-        scheduler.alpha.kubernetes.io/critical-pod: ""
     spec:
       serviceAccountName: istio-citadel-service-account
 {{- if .Values.global.priorityClassName }}
@@ -33,6 +40,8 @@ spec:
             - --grpc-port=8060
             - --grpc-hostname=citadel
             - --citadel-storage-namespace={{ .Release.Namespace }}
+            - --custom-dns-names=istio-pilot-service-account.{{ .Release.Namespace }}:istio-pilot.{{ .Release.Namespace }}
+            - --monitoring-port={{ .Values.global.monitoringPort }}
           {{- if .Values.selfSigned }}
             - --self-signed-ca=true
           {{- else }}
@@ -42,6 +51,15 @@ spec:
             - --root-cert=/etc/cacerts/root-cert.pem
             - --cert-chain=/etc/cacerts/cert-chain.pem
           {{- end }}
+          {{- if .Values.global.trustDomain }}
+            - --trust-domain={{ .Values.global.trustDomain }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /version
+              port: {{ .Values.global.monitoringPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
           resources:
 {{- if .Values.resources }}
 {{ toYaml .Values.resources | indent 12 }}
@@ -61,3 +79,4 @@ spec:
 {{- end }}
       affinity:
       {{- include "nodeaffinity" . | indent 6 }}
+      {{- include "podAntiAffinity" . | indent 6 }}

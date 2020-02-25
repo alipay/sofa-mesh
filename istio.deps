@@ -4,10 +4,19 @@
 		"name": "PROXY_REPO_SHA",
 		"repoName": "proxy",
 		"file": "",
+		"lastStableSHA": "73fa9b1f29f91029cc2485a685994a0d1dbcde21"
+	},
+	{
+                "_comment": "",
+                "name": "CNI_REPO_SHA",
+                "repoName": "cni",
+                "file": "",
+                "lastStableSHA": "de2ae6dcce2cd3ac55823b9aa099c2b462a8ba6e"
+        }
 		"lastStableSHA": "6166ae7ebac7f630206b2fe4e6767516bf198313"
 	},
 	{
 	    "name": "MOSN_VERSION",
-	    "version": "0.1.0"
+	    "version": "0.5.0-rc.1"
 	}
 ]

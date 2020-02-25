@@ -17,7 +17,27 @@ package inject
 const (
 	sidecarTemplateDelimBegin = "[["
 	sidecarTemplateDelimEnd   = "]]"
-	parameterizedTemplate     = `
+
+	// nolint: lll
+	parameterizedTemplate = `
+[[- $proxyImageKey                  := "sidecar.istio.io/proxyImage" -]]
+[[- $interceptionModeKey            := "sidecar.istio.io/interceptionMode" -]]
+[[- $statusPortKey                  := "status.sidecar.istio.io/port" -]]
+[[- $readinessInitialDelayKey       := "readiness.status.sidecar.istio.io/initialDelaySeconds" -]]
+[[- $readinessPeriodKey             := "readiness.status.sidecar.istio.io/periodSeconds" -]]
+[[- $readinessFailureThresholdKey   := "readiness.status.sidecar.istio.io/failureThreshold" -]]
+[[- $readinessApplicationPortsKey   := "readiness.status.sidecar.istio.io/applicationPorts" -]]
+[[- $includeOutboundIPRangesKey     := "traffic.sidecar.istio.io/includeOutboundIPRanges" -]]
+[[- $excludeOutboundIPRangesKey     := "traffic.sidecar.istio.io/excludeOutboundIPRanges" -]]
+[[- $includeInboundPortsKey         := "traffic.sidecar.istio.io/includeInboundPorts" -]]
+[[- $excludeInboundPortsKey         := "traffic.sidecar.istio.io/excludeInboundPorts" -]]
+[[- $kubevirtInterfacesKey          := "traffic.sidecar.istio.io/kubevirtInterfaces" -]]
+[[- $statusPortValue                := (annotation .ObjectMeta $statusPortKey {{ .StatusPort }}) -]]
+[[- $readinessInitialDelayValue     := (annotation .ObjectMeta $readinessInitialDelayKey "{{ .ReadinessInitialDelaySeconds }}") -]]
+[[- $readinessPeriodValue           := (annotation .ObjectMeta $readinessPeriodKey "{{ .ReadinessPeriodSeconds }}") ]]
+[[- $readinessFailureThresholdValue := (annotation .ObjectMeta $readinessFailureThresholdKey {{ .ReadinessFailureThreshold }}) -]]
+[[- $readinessApplicationPortsValue := (annotation .ObjectMeta $readinessApplicationPortsKey (applicationPorts .Spec.Containers)) -]]
+rewriteAppHTTPProbe: {{ .RewriteAppHTTPProbe }}
 initContainers:
 - name: istio-init
   image: {{ .InitImage }}
@@ -27,35 +47,19 @@ initContainers:
   - "-u"
   - {{ .SidecarProxyUID }}
   - "-m"
-  - [[ or (index .ObjectMeta.Annotations "sidecar.istio.io/interceptionMode") .ProxyConfig.InterceptionMode.String ]]
+  - "[[ annotation .ObjectMeta $interceptionModeKey .ProxyConfig.InterceptionMode ]]"
   - "-i"
-  [[ if (isset .ObjectMeta.Annotations "traffic.sidecar.istio.io/includeOutboundIPRanges") -]]
-  - "[[ index .ObjectMeta.Annotations "traffic.sidecar.istio.io/includeOutboundIPRanges"]]"
-  [[ else -]]
-  - "{{ .IncludeIPRanges }}"
-  [[ end -]]
+  - "[[ annotation .ObjectMeta $includeOutboundIPRangesKey "{{ .IncludeIPRanges }}" ]]"
   - "-x"
-  [[ if (isset .ObjectMeta.Annotations "traffic.sidecar.istio.io/excludeOutboundIPRanges") -]]
-  - "[[ index .ObjectMeta.Annotations "traffic.sidecar.istio.io/excludeOutboundIPRanges" ]]"
-  [[ else -]]
-  - "{{ .ExcludeIPRanges }}"
-  [[ end -]]
+  - "[[ annotation .ObjectMeta $excludeOutboundIPRangesKey "{{ .ExcludeIPRanges }}" ]]"
   - "-b"
-  [[ if (isset .ObjectMeta.Annotations "traffic.sidecar.istio.io/includeInboundPorts") -]]
-  - "[[ index .ObjectMeta.Annotations "traffic.sidecar.istio.io/includeInboundPorts" ]]"
-  [[ else -]]
-  - [[ range .Spec.Containers -]]
-      [[ range .Ports -]]
-        [[ .ContainerPort -]],
-      [[ end -]]
-    [[ end -]]
-  [[ end ]]
+  - "[[ annotation .ObjectMeta $includeInboundPortsKey (includeInboundPorts .Spec.Containers) ]]"
   - "-d"
-  [[ if (isset .ObjectMeta.Annotations "traffic.sidecar.istio.io/excludeInboundPorts") -]]
-  - "[[ index .ObjectMeta.Annotations "traffic.sidecar.istio.io/excludeInboundPorts" ]]"
-  [[ else -]]
-  - "{{ .ExcludeInboundPorts }}"
-  [[ end -]]
+  - "[[ excludeInboundPort $statusPortValue (annotation .ObjectMeta $excludeInboundPortsKey "{{ .ExcludeInboundPorts }}") ]]"
+  {{ "[[ if (isset .ObjectMeta.Annotations \"traffic.sidecar.istio.io/kubevirtInterfaces\") -]]" }}
+  - "-k"
+  - "[[ annotation .ObjectMeta $kubevirtInterfacesKey "{{ .KubevirtInterfaces }}" ]]"
+  {{ "[[ end -]]" }}
   {{ if eq .ImagePullPolicy "" -}}
   imagePullPolicy: IfNotPresent
   {{ else -}}
@@ -65,30 +69,27 @@ initContainers:
     capabilities:
       add:
       - NET_ADMIN
-    {{ if eq .DebugMode true -}}
+    {{ if (or (eq .DebugMode true) (eq .Privileged true)) -}}
     privileged: true
     {{ end -}}
   restartPolicy: Always
 {{ if eq .EnableCoreDump true -}}
-- args:
+- name: enable-core-dump
+  args:
   - -c
-  - sysctl -w kernel.core_pattern=/etc/istio/proxy/core.%e.%p.%t && ulimit -c unlimited
+  - sysctl -w kernel.core_pattern=/var/lib/istio/core.proxy && ulimit -c unlimited
   command:
-  - /bin/sh
+    - /bin/sh
   image: {{ .InitImage }}
   imagePullPolicy: IfNotPresent
-  name: enable-core-dump
   resources: {}
   securityContext:
     privileged: true
-{{ end -}}
+{{- end }}
+
 containers:
 - name: istio-proxy
-  image: [[ if (isset .ObjectMeta.Annotations "sidecar.istio.io/proxyImage") -]]
-  "[[ index .ObjectMeta.Annotations "sidecar.istio.io/proxyImage" ]]"
-  [[ else -]]
-  {{ .ProxyImage }}
-  [[ end -]]
+  image: [[ annotation .ObjectMeta $proxyImageKey "{{ .ProxyImage }}" ]]
   args:
   - proxy
   - sidecar
@@ -98,9 +99,9 @@ containers:
   - [[ .ProxyConfig.BinaryPath ]]
   - --serviceCluster
   [[ if ne "" (index .ObjectMeta.Labels "app") -]]
-  - [[ index .ObjectMeta.Labels "app" ]]
+  - "[[ index .ObjectMeta.Labels "app" ]].[[ valueOrDefault .DeploymentMeta.Namespace "default" ]]"
   [[ else -]]
-  - "istio-proxy"
+  - "[[ valueOrDefault .DeploymentMeta.Name "istio-proxy" ]].[[ valueOrDefault .DeploymentMeta.Namespace "default" ]]"
   [[ end -]]
   - --drainDuration
   - [[ formatDuration .ProxyConfig.DrainDuration ]]
@@ -108,18 +109,47 @@ containers:
   - [[ formatDuration .ProxyConfig.ParentShutdownDuration ]]
   - --discoveryAddress
   - [[ .ProxyConfig.DiscoveryAddress ]]
-  - --discoveryRefreshDelay
-  - [[ formatDuration .ProxyConfig.DiscoveryRefreshDelay ]]
+  [[ if .ProxyConfig.GetTracing.GetLightstep -]]
+  - --lightstepAddress
+  - [[ .ProxyConfig.GetTracing.GetLightstep.GetAddress ]]
+  - --lightstepAccessToken
+  - [[ .ProxyConfig.GetTracing.GetLightstep.GetAccessToken ]]
+  - --lightstepSecure=[[ .ProxyConfig.GetTracing.GetLightstep.GetSecure ]]
+  - --lightstepCacertPath
+  - [[ .ProxyConfig.GetTracing.GetLightstep.GetCacertPath ]]
+  [[ else if .ProxyConfig.GetTracing.GetZipkin -]]
   - --zipkinAddress
-  - [[ .ProxyConfig.ZipkinAddress ]]
+  - [[ .ProxyConfig.GetTracing.GetZipkin.GetAddress ]]
+  [[ end -]]
   - --connectTimeout
   - [[ formatDuration .ProxyConfig.ConnectTimeout ]]
   - --statsdUdpAddress
   - [[ .ProxyConfig.StatsdUdpAddress ]]
   - --proxyAdminPort
   - [[ .ProxyConfig.ProxyAdminPort ]]
+  [[ if gt .ProxyConfig.Concurrency 0 -]]
+  - --concurrency
+  - [[ .ProxyConfig.Concurrency ]]
+  [[ end -]]
   - --controlPlaneAuthPolicy
   - [[ .ProxyConfig.ControlPlaneAuthPolicy ]]
+  - --statusPort
+  - [[ $statusPortValue ]]
+  - --applicationPorts
+  - "[[ $readinessApplicationPortsValue ]]"
+  [[ if (ne $statusPortValue "0") ]]
+  readinessProbe:
+    httpGet:
+      path: /healthz/ready
+      port: [[ $statusPortValue ]]
+    initialDelaySeconds: [[ $readinessInitialDelayValue ]]
+    periodSeconds: [[ $readinessPeriodValue ]]
+    failureThreshold: [[ $readinessFailureThresholdValue ]]
+  [[ end -]]
+  ports:
+  - containerPort: 15090
+    protocol: TCP
+    name: http-envoy-prom
   env:
   - name: POD_NAME
     valueFrom:
@@ -138,7 +168,7 @@ containers:
       fieldRef:
         fieldPath: metadata.name
   - name: ISTIO_META_INTERCEPTION_MODE
-    value: [[ or (index .ObjectMeta.Annotations "sidecar.istio.io/interceptionMode") .ProxyConfig.InterceptionMode.String ]]
+    value: [[ annotation .ObjectMeta $interceptionModeKey .ProxyConfig.InterceptionMode ]]
   {{ if eq .ImagePullPolicy "" -}}
   imagePullPolicy: IfNotPresent
   {{ else -}}
@@ -148,29 +178,54 @@ containers:
     requests:
       cpu: 10m
   securityContext:
-    {{ if eq .DebugMode true -}}
+    {{ if (or (eq .DebugMode true) (eq .Privileged true)) -}}
     privileged: true
+    {{ end -}}
+    {{ if eq .DebugMode true -}}
     readOnlyRootFilesystem: false
-    {{ else -}}
-    privileged: false
+    {{ else }}
     readOnlyRootFilesystem: true
-    [[ if eq (or (index .ObjectMeta.Annotations "sidecar.istio.io/interceptionMode") .ProxyConfig.InterceptionMode.String) "TPROXY" -]]
+    {{ end -}}
+    [[ if eq (annotation .ObjectMeta $interceptionModeKey .ProxyConfig.InterceptionMode) "TPROXY" -]]
     capabilities:
       add:
       - NET_ADMIN
     [[ end -]]
-    {{ end -}}
-    [[ if ne (or (index .ObjectMeta.Annotations "sidecar.istio.io/interceptionMode") .ProxyConfig.InterceptionMode.String) "TPROXY" -]]
+    [[ if eq (annotation .ObjectMeta $interceptionModeKey .ProxyConfig.InterceptionMode) "TPROXY" -]]
     runAsUser: 1337
-    [[ end -]]
-  restartPolicy: Always
+    {{- if and .SDSEnabled .EnableSdsTokenMount }}
+    runAsGroup: 1337
+    {{ end -}}
+    [[- end ]]
   volumeMounts:
   - mountPath: /etc/istio/proxy
     name: istio-envoy
   - mountPath: /etc/certs/
     name: istio-certs
     readOnly: true
+{{ if eq .SDSEnabled true -}}
+  - mountPath: /var/run/sds
+    name: sdsudspath
+{{ if eq .EnableSdsTokenMount true -}}
+  - mountPath: /var/run/secrets/tokens
+    name: istio-token
+{{ end -}}
+{{ end -}}
 volumes:
+{{ if eq .SDSEnabled true -}}
+- name: sdsudspath
+  hostPath:
+    path: /var/run/sds
+{{ if eq .EnableSdsTokenMount true -}}
+- name: istio-token
+  projected:
+    sources:
+    - serviceAccountToken:
+      path: istio-token
+      expirationSeconds: 43200
+      audience: istio
+{{ end -}}
+{{ end -}}
 - emptyDir:
     medium: Memory
   name: istio-envoy

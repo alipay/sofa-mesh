@@ -29,39 +29,59 @@ import (
 )
 
 var (
-	dialTimeout    = 5 * time.Second
+	dialTimeout = 5 * time.Second
 )
 
+func useNonSecureClient(config *Config) bool {
+	return config.EtcdCaCertFile == "" ||
+		config.EtcdCertFile == "" ||
+		config.EtcdKeyFile == ""
+}
+
 func newEtcdClient(config *Config) *clientv3.Client {
-	cert, err := tls.LoadX509KeyPair(config.EtcdCertFile, config.EtcdKeyFile)
-	if err != nil {
-		log.Errora("LoadX509KeyPair err:%v", err)
-		return nil
+	if !useNonSecureClient(config) {
+		cert, err := tls.LoadX509KeyPair(config.EtcdCertFile, config.EtcdKeyFile)
+		if err != nil {
+			log.Errorf("LoadX509KeyPair err:%v", err)
+			return nil
+		}
+
+		// Load CA cert
+		caCert, err := ioutil.ReadFile(config.EtcdCaCertFile)
+		if err != nil {
+			log.Errorf("ReadFile err:%v", err)
+			return nil
+		}
+
+		caCertPool := x509.NewCertPool()
+		caCertPool.AppendCertsFromPEM(caCert)
+
+		// Setup HTTPS client
+		tlsConfig := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			RootCAs:      caCertPool,
+		}
+		tlsConfig.BuildNameToCertificate()
+		client, err := clientv3.New(clientv3.Config{
+			Endpoints:   config.EtcdEndpoints,
+			TLS:         tlsConfig,
+			DialTimeout: dialTimeout,
+		})
+		if err != nil {
+			log.Errorf("new client v3 err:%v", err)
+			return nil
+		}
+		return client
 	}
 
-	// Load CA cert
-	caCert, err := ioutil.ReadFile(config.EtcdCaCertFile)
-	if err != nil {
-		log.Errora("ReadFile err:%v", err)
-		return nil
-	}
-
-	caCertPool := x509.NewCertPool()
-	caCertPool.AppendCertsFromPEM(caCert)
-
-	// Setup HTTPS client
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      caCertPool,
-	}
-	tlsConfig.BuildNameToCertificate()
+	// non secure etcd client
+	log.Infof("create etcd client use non-secure option, endpoint:%v", config.EtcdEndpoints)
 	client, err := clientv3.New(clientv3.Config{
 		Endpoints:   config.EtcdEndpoints,
-		TLS:         tlsConfig,
 		DialTimeout: dialTimeout,
 	})
 	if err != nil {
-		log.Errora("new client v3 err:%v", err)
+		log.Errorf("new client v3 err:%v", err)
 		return nil
 	}
 

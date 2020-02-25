@@ -24,39 +24,34 @@ import (
 	"istio.io/istio/pilot/pkg/model"
 )
 
-func (s *DiscoveryServer) pushLds(con *XdsConnection, push *model.PushStatus, onConnect bool, version string) error {
+func (s *DiscoveryServer) pushLds(con *XdsConnection, push *model.PushContext, version string) error {
 	// TODO: Modify interface to take services, and config instead of making library query registry
 
 	rawListeners, err := s.generateRawListeners(con, push)
 	if err != nil {
 		return err
 	}
-	con.HTTPListeners = rawListeners
-	response := ldsDiscoveryResponse(rawListeners, *con.modelNode, version)
-	if version != versionInfo() {
-		// Just report for now - after debugging we can suppress the push.
-		// Change1 -> push1
-		// Change2 (after few seconds ) -> push2
-		// push1 may take 10 seconds and be slower - and a sidecar may get
-		// LDS from push2 first, followed by push1 - which will be out of date.
-		adsLog.Warnf("LDS: overlap %s %s %s", con.ConID, version, versionInfo())
+	if s.DebugConfigs {
+		con.LDSListeners = rawListeners
 	}
+	response := ldsDiscoveryResponse(rawListeners, version)
 	err = con.send(response)
 	if err != nil {
-		adsLog.Warnf("LDS: Send failure, closing grpc %v", err)
+		adsLog.Warnf("LDS: Send failure %s: %v", con.ConID, err)
 		pushes.With(prometheus.Labels{"type": "lds_senderr"}).Add(1)
 		return err
 	}
 	pushes.With(prometheus.Labels{"type": "lds"}).Add(1)
 
-	adsLog.Infof("LDS: PUSH for node:%s addr:%q listeners:%d", con.modelNode.ID, con.PeerAddr, len(rawListeners))
+	adsLog.Infof("LDS: PUSH for node:%s addr:%q listeners:%d %d", con.modelNode.ID, con.PeerAddr, len(rawListeners),
+		response.Size())
 	return nil
 }
 
-func (s *DiscoveryServer) generateRawListeners(con *XdsConnection, push *model.PushStatus) ([]*xdsapi.Listener, error) {
-	rawListeners, err := s.ConfigGenerator.BuildListeners(s.env, con.modelNode, push)
+func (s *DiscoveryServer) generateRawListeners(con *XdsConnection, push *model.PushContext) ([]*xdsapi.Listener, error) {
+	rawListeners, err := s.ConfigGenerator.BuildListeners(s.Env, con.modelNode, push)
 	if err != nil {
-		adsLog.Warnf("LDS: Failed to generate listeners for node %s: %v", con.modelNode, err)
+		adsLog.Warnf("LDS: Failed to generate listeners for node %s: %v", con.modelNode.ID, err)
 		pushes.With(prometheus.Labels{"type": "lds_builderr"}).Add(1)
 		return nil, err
 	}
@@ -64,7 +59,7 @@ func (s *DiscoveryServer) generateRawListeners(con *XdsConnection, push *model.P
 	for _, l := range rawListeners {
 		if err = l.Validate(); err != nil {
 			retErr := fmt.Errorf("LDS: Generated invalid listener for node %v: %v", con.modelNode, err)
-			adsLog.Errorf("LDS: Generated invalid listener for node %s: %v, %v", con.modelNode, err, l)
+			adsLog.Errorf("LDS: Generated invalid listener for node %s: %v, %v", con.modelNode.ID, err, l)
 			pushes.With(prometheus.Labels{"type": "lds_builderr"}).Add(1)
 			// Generating invalid listeners is a bug.
 			// Panic instead of trying to recover from that, since we can't
@@ -76,7 +71,7 @@ func (s *DiscoveryServer) generateRawListeners(con *XdsConnection, push *model.P
 }
 
 // LdsDiscoveryResponse returns a list of listeners for the given environment and source node.
-func ldsDiscoveryResponse(ls []*xdsapi.Listener, node model.Proxy, version string) *xdsapi.DiscoveryResponse {
+func ldsDiscoveryResponse(ls []*xdsapi.Listener, version string) *xdsapi.DiscoveryResponse {
 	resp := &xdsapi.DiscoveryResponse{
 		TypeUrl:     ListenerType,
 		VersionInfo: version,
@@ -85,6 +80,7 @@ func ldsDiscoveryResponse(ls []*xdsapi.Listener, node model.Proxy, version strin
 	for _, ll := range ls {
 		if ll == nil {
 			adsLog.Errora("Nil listener ", ll)
+			totalXDSInternalErrors.Add(1)
 			continue
 		}
 		lr, _ := types.MarshalAny(ll)

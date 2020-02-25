@@ -1,4 +1,4 @@
-// Copyright 2017 Istio Authors. All Rights Reserved.
+// Copyright 2017 Istio Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,10 +19,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
-	rpc "github.com/gogo/googleapis/google/rpc"
+	"github.com/gogo/googleapis/google/rpc"
 
 	mixerpb "istio.io/api/mixer/v1"
 	"istio.io/istio/pkg/test"
@@ -44,6 +46,7 @@ type TestSetup struct {
 	noProxy           bool
 	noBackend         bool
 	disableHotRestart bool
+	checkDict         bool
 
 	FiltersBeforeMixer string
 
@@ -65,6 +68,12 @@ type TestSetup struct {
 
 	// AccessLogPath is the access log path for Envoy
 	AccessLogPath string
+
+	// expected source.uid attribute at the mixer gRPC metadata
+	mixerSourceUID string
+
+	// Dir is the working dir for envoy
+	Dir string
 }
 
 // NewTestSetup creates a new test setup
@@ -139,6 +148,11 @@ func (s *TestSetup) SetStress(stress bool) {
 	s.stress = stress
 }
 
+// SetCheckDict set the checkDict flag
+func (s *TestSetup) SetCheckDict(checkDict bool) {
+	s.checkDict = checkDict
+}
+
 // SetNoMixer set NoMixer flag
 func (s *TestSetup) SetNoMixer(no bool) {
 	s.noMixer = no
@@ -164,10 +178,15 @@ func (s *TestSetup) SetNoBackend(no bool) {
 	s.noBackend = no
 }
 
+// SetMixerSourceUID sets the expected source.uid at the mixer server gRPC metadata
+func (s *TestSetup) SetMixerSourceUID(uid string) {
+	s.mixerSourceUID = uid
+}
+
 // SetUp setups Envoy, Mixer, and Backend server for test.
 func (s *TestSetup) SetUp() error {
 	var err error
-	s.envoy, err = s.NewEnvoy()
+	s.envoy, err = s.NewMosn()
 	if err != nil {
 		log.Printf("unable to create Envoy %v", err)
 		return err
@@ -179,11 +198,14 @@ func (s *TestSetup) SetUp() error {
 	}
 
 	if !s.noMixer {
-		s.mixer, err = NewMixerServer(s.ports.MixerPort, s.stress)
+		s.mixer, err = NewMixerServer(s.ports.MixerPort, s.stress, s.checkDict, s.mixerSourceUID)
 		if err != nil {
 			log.Printf("unable to create mixer server %v", err)
 		} else {
-			s.mixer.Start()
+			errCh := s.mixer.Start()
+			if err = <-errCh; err != nil {
+				log.Fatalf("mixer start failed %v", err)
+			}
 		}
 	}
 
@@ -192,7 +214,10 @@ func (s *TestSetup) SetUp() error {
 		if err != nil {
 			log.Printf("unable to create HTTP server %v", err)
 		} else {
-			s.backend.Start()
+			errCh := s.backend.Start()
+			if err = <-errCh; err != nil {
+				log.Fatalf("backend server start failed %v", err)
+			}
 		}
 	}
 
@@ -206,6 +231,8 @@ func (s *TestSetup) TearDown() {
 	if err := s.envoy.Stop(); err != nil {
 		s.t.Errorf("error quitting envoy: %v", err)
 	}
+	s.envoy.TearDown()
+
 	if s.mixer != nil {
 		s.mixer.Stop()
 	}
@@ -231,7 +258,7 @@ func (s *TestSetup) ReStartEnvoy() {
 	log.Printf("new allocated ports are %v:", s.ports)
 	var err error
 	s.epoch++
-	s.envoy, err = s.NewEnvoy()
+	s.envoy, err = s.NewMosn()
 	if err != nil {
 		s.t.Errorf("unable to re-start envoy %v", err)
 		return
@@ -351,20 +378,38 @@ func (s *TestSetup) WaitEnvoyReady() {
 	total := 3 * time.Second
 	var stats map[string]int
 	for attempt := 0; attempt < int(total/delay); attempt++ {
-		statsURL := fmt.Sprintf("http://localhost:%d/stats?format=json&usedonly", s.Ports().AdminPort)
+		// TODO get mosn stats, now check the num of listener
+		statsURL := fmt.Sprintf("http://localhost:%d/stats", s.Ports().AdminPort)
 		code, respBody, errGet := HTTPGet(statsURL)
 		if errGet == nil && code == 200 {
-			stats = s.unmarshalStats(respBody)
-			warmingListeners, hasListeners := stats["listener_manager.total_listeners_warming"]
-			warmingClusters, hasClusters := stats["cluster_manager.warming_clusters"]
-			if hasListeners && hasClusters && warmingListeners == 0 && warmingClusters == 0 {
-				return
+			log.Printf("stats resp %s:", respBody)
+			if _, lnum, err := GetMosnStats(respBody); err != nil {
+				s.t.Fatalf("mosn failed to get ready: %v", err)
+			} else {
+				if lnum != 0 {
+					return
+				}
 			}
 		}
 		time.Sleep(delay)
 	}
 
 	s.t.Fatalf("envoy failed to get ready: %v", stats)
+}
+
+func GetMosnStats(statsbody string) (int, int, error) {
+	stats := strings.Split(statsbody, "\n")
+	clusters := strings.Split(stats[0], ":")
+	listeners := strings.Split(stats[1], ":")
+	cnum, err := strconv.Atoi(strings.TrimSpace(clusters[1]))
+	if err != nil {
+		return 0, 0, nil
+	}
+	lnum, err := strconv.Atoi(strings.TrimSpace(listeners[1]))
+	if err != nil {
+		return 0, 0, nil
+	}
+	return cnum, lnum, nil
 }
 
 // UnmarshalStats Unmarshals Envoy stats from JSON format into a map, where stats name is

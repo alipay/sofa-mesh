@@ -1,7 +1,6 @@
 # This is used to generate istio.yaml for a stress/load test cluster.
 
 global:
-  imagePullPolicy: Always
   hub: docker.io/istionightly
   tag: nightly-release-0.8
   meshExpansion: true
@@ -88,16 +87,13 @@ pilot:
   #image: gcr.io/istio-release/pilot:release-1.0-20180720-00-11
   # Override for 0.8 upgrade
   #image: costinm/pilot:costin-dev
+  env:
+    PILOT_PUSH_THROTTLE: 50
+    GODEBUG: gctrace=2
   resources:
     requests:
       cpu: 2800m
       memory: 2G
-
-ingress:
-  enabled: false
-
-prometheus:
-  enabled: true
 
 sidecar-injector:
   enabled: true
@@ -126,6 +122,7 @@ prometheus:
 
 kiali:
   enabled: true
+  tag: latest
 
 certmanager:
   enabled: true

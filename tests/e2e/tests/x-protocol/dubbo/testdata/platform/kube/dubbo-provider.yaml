@@ -1,0 +1,87 @@
+### dubbo provider service ###
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    servicetype: dubbo
+  name: dubbo-provider
+  labels:
+    app: dubbo-provider
+spec:
+  type: ClusterIP
+  ports:
+  - port: 12345
+    targetPort: 12345
+    name: x-dubbo-port
+    protocol: TCP
+  selector:
+    app: dubbo-provider
+---
+### dubbo provider v1 deployment ###
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: dubbo-provider
+    ver: v1
+  name: dubbo-provider-v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dubbo-provider
+  template:
+    metadata:
+      labels:
+        app: dubbo-provider
+        ver: v1
+      name: dubbo-provider-v1
+    spec:
+      containers:
+      - command:
+        - bash
+        - -c
+        - |
+          java -Ddubbo.protocol.port=12345 \
+            -jar dubbo-provider.jar
+        image: docker.io/sofastack/e2e-dubbo-provider:0.2.1
+        imagePullPolicy: IfNotPresent
+        name: app
+        ports:
+        - containerPort: 12345
+          protocol: TCP
+---
+### dubbo provider v2 deployment ###
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: dubbo-provider
+    ver: v2
+  name: dubbo-provider-v2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dubbo-provider
+  template:
+    metadata:
+      labels:
+        app: dubbo-provider
+        ver: v2
+      name: dubbo-provider-v2
+    spec:
+      containers:
+      - command:
+        - bash
+        - -c
+        - |
+          java \
+            -Ddubbo.protocol.port=12345 \
+            -jar dubbo-provider.jar
+        image: docker.io/sofastack/e2e-dubbo-provider:0.2.1
+        imagePullPolicy: IfNotPresent
+        name: app
+        ports:
+        - containerPort: 12345
+          protocol: TCP

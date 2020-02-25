@@ -19,6 +19,7 @@ package controller
 
 // Config struct for rpc controller cmd
 type Config struct {
+	CoreDnsAddress string
 	EtcdKeyFile    string
 	EtcdCertFile   string
 	EtcdCaCertFile string

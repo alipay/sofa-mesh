@@ -7,6 +7,11 @@
 #   definitions, configmaps, secrets (names only) and "all" as defined by
 #   kubectl.
 
+COREDUMP_DIR="/var/lib/istio"
+
+# Limit total log size to 100MB by default
+DEFAULT_MAX_LOG_BYTES=100000000
+
 error() {
   echo "$*" >&2
 }
@@ -23,6 +28,9 @@ usage() {
   error '  -z, --archive            if present, archives and removes the output'
   error '                               directory'
   error '  -q, --quiet              if present, do not log'
+  error '  -m, --max-bytes          max total bytes, 0=no limit, default='${DEFAULT_MAX_LOG_BYTES}
+  error '  -l, --label              if set, dump logs only for pods with given labels e.g. "-l app=pilot -l istio=galley"'
+  error '  -n, --namespace          if set, dump logs only for pods in the given namespaces e.g. "-n default -n istio-system"'
   error '  --error-if-nasty-logs    if present, exit with 255 if any logs'
   error '                               contain errors'
   exit 1
@@ -36,6 +44,7 @@ log() {
 }
 
 parse_args() {
+  local max_bytes="${DEFAULT_MAX_LOG_BYTES}"
   while [ "$#" -gt 0 ]; do
     case "${1}" in
       -d|--output-directory)
@@ -54,6 +63,18 @@ parse_args() {
         local should_check_logs_for_errors=true
         shift # Shift past flag.
         ;;
+      -m|--max-bytes)
+        max_bytes="${2}"
+        shift 2
+        ;;
+      -l|--label)
+        pod_labels+="${2} "
+        shift 2
+        ;;
+      -n|--namespace)
+        namespaces+="${2} "
+        shift 2
+        ;;
       *)
         usage
         ;;
@@ -67,6 +88,7 @@ parse_args() {
   readonly LOG_DIR="${OUT_DIR}/logs"
   readonly RESOURCES_FILE="${OUT_DIR}/resources.yaml"
   readonly ISTIO_RESOURCES_FILE="${OUT_DIR}/istio-resources.yaml"
+  readonly MAX_LOG_BYTES="${max_bytes}"
 }
 
 check_prerequisites() {
@@ -84,6 +106,28 @@ dump_time() {
   date -u > "${OUT_DIR}/DUMP_TIME"
 }
 
+# mv_unless_max_exceeded src_file dest_file performs mv src_file dest_file unless the global variable stored_log_bytes
+# would exceed max_log_bytes.
+# If total not exceeded, file is moved and max_log_bytes updated, otherwise an error is logged.
+# src_file is always deleted when calling this function.
+mv_unless_max_exceeded() {
+  local src_file="${1}"
+  local dst_file="${2}"
+
+  file_size=$(wc -c "${src_file}" | awk '{print $1}')
+  local nsb=$(("${stored_log_bytes}" + "${file_size}"))
+
+  if (("${nsb}" > "${MAX_LOG_BYTES}")); then
+    log "Not storing ${log_file} because appending its ${file_size} bytes would exceed max logged bytes ${MAX_LOG_BYTES}"
+    rm "${src_file}"
+  else
+    dirn=$(dirname "${dst_file}")
+    mkdir -p "${dirn}"
+    mv "${src_file}" "${dst_file}"
+    stored_log_bytes="${nsb}"
+  fi
+}
+
 dump_logs_for_container() {
   local namespace="${1}"
   local pod="${2}"
@@ -93,10 +137,12 @@ dump_logs_for_container() {
 
   mkdir -p "${LOG_DIR}/${namespace}/${pod}"
   local log_file_head="${LOG_DIR}/${namespace}/${pod}/${container}"
+  local temp_log_file="${LOG_DIR}/temp_log_file.log"
 
   local log_file="${log_file_head}.log"
   kubectl logs --namespace="${namespace}" "${pod}" "${container}" \
-      > "${log_file}"
+      > "${temp_log_file}"
+  mv_unless_max_exceeded "${temp_log_file}" "${log_file}"
 
   local filter="?(@.name == \"${container}\")"
   local json_path='{.status.containerStatuses['${filter}'].restartCount}'
@@ -110,7 +156,8 @@ dump_logs_for_container() {
     log_previous_file="${log_file_head}_previous.log"
     kubectl logs --namespace="${namespace}" \
         --previous "${pod}" "${container}" \
-        > "${log_previous_file}"
+        > "${temp_log_file}"
+    mv_unless_max_exceeded "${temp_log_file}" "${log_previous_file}"
   fi
 }
 
@@ -118,13 +165,14 @@ copy_core_dumps_if_istio_proxy() {
   local namespace="${1}"
   local pod="${2}"
   local container="${3}"
+  local got_core_dump=false
 
   if [ "istio-proxy" = "${container}" ]; then
     local out_dir="${LOG_DIR}/${namespace}/${pod}"
     mkdir -p "${out_dir}"
     local core_dumps
     core_dumps=$(kubectl exec -n "${namespace}" "${pod}" -c "${container}" -- \
-        find /etc/istio/proxy /var/istio/proxy -name 'core.*')
+        find ${COREDUMP_DIR} -name 'core.*')
     for f in ${core_dumps}; do
       local out_file
       out_file="${out_dir}/$(basename "${f}")"
@@ -133,35 +181,48 @@ copy_core_dumps_if_istio_proxy() {
           cat "${f}" > "${out_file}"
 
       log "Copied ${namespace}/${pod}/${container}:${f} to ${out_file}"
+      got_core_dump=true
     done
+  fi
+  if [ "${got_core_dump}" = true ]; then
+    return 254
   fi
 }
 
 # Run functions on each container. Each argument should be a function which
 # takes 3 args: ${namespace} ${pod} ${container}.
+# If any of the called functions returns error, tap_containers returns
+# immediately with that error.
 tap_containers() {
-  local functions=( "$@" )
-
-  local namespaces
-  namespaces=$(kubectl get \
-      namespaces -o=jsonpath="{.items[*].metadata.name}")
+  local functions=("$@")
+  if [ -z "${namespaces}" ]; then
+    namespaces=$(kubectl get \
+        namespaces -o=jsonpath="{.items[*].metadata.name}")
+  fi
   for namespace in ${namespaces}; do
-    local pods
-    pods=$(kubectl get --namespace="${namespace}" \
-        pods -o=jsonpath='{.items[*].metadata.name}')
+    local pods=""
+    if [ -n "${pod_labels}" ]; then
+      for label in $pod_labels; do
+        pods+=$(kubectl get --namespace="${namespace}" -l"${label}" \
+            pods -o=jsonpath='{.items[*].metadata.name}')" "
+      done
+    else
+        pods=$(kubectl get --namespace="${namespace}" \
+            pods -o=jsonpath='{.items[*].metadata.name}')
+    fi
     for pod in ${pods}; do
       local containers
       containers=$(kubectl get --namespace="${namespace}" \
           pod "${pod}" -o=jsonpath='{.spec.containers[*].name}')
       for container in ${containers}; do
-
         for f in "${functions[@]}"; do
-          "${f}" "${namespace}" "${pod}" "${container}"
+          "${f}" "${namespace}" "${pod}" "${container}" || return $?
         done
-
       done
     done
   done
+
+  return 0
 }
 
 dump_kubernetes_resources() {
@@ -185,7 +246,7 @@ dump_istio_custom_resource_definitions() {
       | tr '\n' ',' \
       | sed 's/,$//')
 
-  if [ ! -z "${istio_resources}" ]; then
+  if [ -n "${istio_resources}" ]; then
     kubectl get "${istio_resources}" --all-namespaces -o yaml \
         > "${ISTIO_RESOURCES_FILE}"
   fi
@@ -219,13 +280,14 @@ dump_pilot() {
   pilot_pod=$(kubectl -n istio-system get pods -l istio=pilot \
       -o jsonpath='{.items[*].metadata.name}')
 
-  if [ ! -z "${pilot_pod}" ]; then
+  if [ -n "${pilot_pod}" ]; then
     local pilot_dir="${OUT_DIR}/pilot"
     mkdir -p "${pilot_dir}"
 
     dump_pilot_url "${pilot_pod}" debug/configz "${pilot_dir}"
     dump_pilot_url "${pilot_pod}" debug/endpointz "${pilot_dir}"
     dump_pilot_url "${pilot_pod}" debug/adsz "${pilot_dir}"
+    dump_pilot_url "${pilot_pod}" debug/authenticationz "${pilot_dir}"
     dump_pilot_url "${pilot_pod}" metrics "${pilot_dir}"
   fi
 }
@@ -249,14 +311,15 @@ check_logs_for_errors() {
 }
 
 main() {
+  local exit_code=0
   parse_args "$@"
   check_prerequisites kubectl
   dump_time
   dump_pilot
   dump_resources
-  tap_containers dump_logs_for_container copy_core_dumps_if_istio_proxy
+  tap_containers "dump_logs_for_container" "copy_core_dumps_if_istio_proxy"
+  exit_code=$?
 
-  local exit_code=0
   if [ "${SHOULD_CHECK_LOGS_FOR_ERRORS}" = true ]; then
     if ! check_logs_for_errors; then
       exit_code=255
@@ -271,5 +334,7 @@ main() {
 
   return ${exit_code}
 }
+
+stored_log_bytes=0
 
 main "$@"

@@ -66,7 +66,7 @@ func (c *Controller) AppendInstanceHandler(f func(*model.ServiceInstance, model.
 // Run until a signal is received
 func (c *Controller) Run(stop <-chan struct{}) {
 	if err := c.client.Start(); err != nil {
-		log.Warnf("Can not connect to zk %s", c.client)
+		log.Warnf("Can not connect to zk %v", c.client)
 		return
 	}
 
@@ -76,13 +76,13 @@ func (c *Controller) Run(stop <-chan struct{}) {
 		case event := <-c.client.Events():
 			switch event.EventType {
 			case ServiceAdded:
-				log.Infof("Service %s added", event.Service)
+				log.Infof("Service %v added", event.Service)
 				service := toService(event.Service)
 				for _, handler := range c.serviceHandlers {
 					go handler(service, model.EventAdd)
 				}
 			case ServiceDeleted:
-				log.Infof("Service %s deleted", event.Service)
+				log.Infof("Service %v deleted", event.Service)
 				service := toService(event.Service)
 				for _, handler := range c.serviceHandlers {
 					go handler(service, model.EventDelete)
@@ -137,7 +137,7 @@ func (sd *Controller) GetServiceAttributes(hostname model.Hostname) (*model.Serv
 	svc, err := sd.GetService(hostname)
 	if svc != nil {
 		return &model.ServiceAttributes{
-			Name:      hostname.String(),
+			Name:      string(hostname),
 			Namespace: model.IstioDefaultConfigNamespace}, nil
 	}
 	return nil, err
@@ -186,7 +186,7 @@ func (c *Controller) InstancesByPort(hostname model.Hostname, port int,
 }
 
 func (c *Controller) GetProxyServiceInstances(proxy *model.Proxy) ([]*model.ServiceInstance, error) {
-	instances := c.client.InstancesByHost(proxy.IPAddress)
+	instances := c.client.InstancesByHost(proxy.IPAddresses)
 	result := make([]*model.ServiceInstance, 0, len(instances))
 	for _, instance := range instances {
 		i, err := toInstance(instance)
