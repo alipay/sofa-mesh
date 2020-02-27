@@ -515,9 +515,9 @@ func (configgen *ConfigGeneratorImpl) buildSidecarInboundListenerForPortOrUDS(li
 	case plugin.ListenerTypeX:
 		listenerOpts.filterChainOpts = []*filterChainOpts{{
 			xOpts: &xListenerOpts{
-				routeConfig:      configgen.buildSidecarInboundHTTPRouteConfig(pluginParams.Env, pluginParams.Node, pluginParams.Push, pluginParams.ServiceInstance),
-				xProtocol:        parseSubProtocol(pluginParams.ServiceInstance.Endpoint.ServicePort.Name),
-				direction:        x_proxy.INGRESS,
+				routeConfig: configgen.buildSidecarInboundHTTPRouteConfig(pluginParams.Env, pluginParams.Node, pluginParams.Push, pluginParams.ServiceInstance),
+				xProtocol:   parseSubProtocol(pluginParams.ServiceInstance.Endpoint.ServicePort.Name),
+				direction:   x_proxy.INGRESS,
 			}},
 		}
 
@@ -1356,11 +1356,11 @@ type httpListenerOpts struct {
 }
 
 type xListenerOpts struct {
-	routeConfig      *xdsapi.RouteConfiguration
-	direction        x_proxy.XProxy_Tracing_OperationName
-	xProtocol        string
-	xProxy           *x_proxy.XProxy
-	statPrefix string
+	routeConfig *xdsapi.RouteConfiguration
+	direction   x_proxy.XProxy_Tracing_OperationName
+	xProtocol   string
+	xProxy      *x_proxy.XProxy
+	statPrefix  string
 }
 
 // filterChainOpts describes a filter chain: a set of filters with the same TLS context
@@ -1373,7 +1373,7 @@ type filterChainOpts struct {
 	match            *listener.FilterChainMatch
 	listenerFilters  []listener.ListenerFilter
 	networkFilters   []listener.Filter
-	xOpts             *xListenerOpts
+	xOpts            *xListenerOpts
 }
 
 // buildListenerOpts are the options required to build a Listener
@@ -1493,12 +1493,6 @@ func buildHTTPConnectionManager(node *model.Proxy, env *model.Environment, httpO
 
 func buildXProxy(env *model.Environment, xOpts *xListenerOpts, streamFilters []*x_proxy.StreamFilter) *x_proxy.XProxy {
 
-	refresh := time.Duration(env.Mesh.RdsRefreshDelay.Seconds) * time.Second
-	if refresh == 0 {
-		// envoy crashes if 0. Will go away once we move to v2
-		refresh = 5 * time.Second
-	}
-
 	if xOpts.xProxy == nil {
 		xOpts.xProxy = &x_proxy.XProxy{}
 	}
@@ -1510,7 +1504,7 @@ func buildXProxy(env *model.Environment, xOpts *xListenerOpts, streamFilters []*
 	if xOpts.direction == x_proxy.INGRESS {
 		xProxy.DownstreamProtocol = x_proxy.Http2
 		xProxy.UpstreamProtocol = x_proxy.X
-	}else{
+	} else {
 		xProxy.DownstreamProtocol = x_proxy.X
 		xProxy.UpstreamProtocol = x_proxy.Http2
 	}
@@ -1530,7 +1524,7 @@ func buildXProxy(env *model.Environment, xOpts *xListenerOpts, streamFilters []*
 		xProxy.AccessLog = []*accesslog.AccessLog{
 			{
 				ConfigType: &accesslog.AccessLog_Config{Config: util.MessageToStruct(fl)},
-				Name:   xdsutil.FileAccessLog,
+				Name:       xdsutil.FileAccessLog,
 			},
 		}
 	}
@@ -1734,7 +1728,7 @@ func buildCompleteFilterChain(pluginParams *plugin.InputParams, mutable *plugin.
 			opt.xOpts.statPrefix = mutable.Listener.Name
 			xProxy := buildXProxy(opts.env, opt.xOpts, chain.X)
 			mutable.Listener.FilterChains[i].Filters = append(mutable.Listener.FilterChains[i].Filters, listener.Filter{
-				Name:   mosnXProxy,
+				Name:       mosnXProxy,
 				ConfigType: &listener.Filter_Config{util.MessageToStruct(xProxy)},
 			})
 			log.Debugf("attached X filter with %d x_filter options to listener %q filter chain %d", 1+len(chain.X), mutable.Listener.Name, i)
