@@ -111,7 +111,7 @@ global:
   hub: docker.io/sofastack
 
   # Default tag for Istio images.
-  tag: 0.5.0-rc.1
+  tag: 0.5.0-snapshot.1
 
   # Comma-separated minimum per-scope logging level of messages to output, in the form of <scope>:<level>,<scope>:<level>
   # The control plane has different scopes depending on component, but can configure default log level across all components
